@@ -9,7 +9,7 @@ const char * password = "miguel997";
 
 
 String FirmwareVer = {
-  "2.6"
+  "2.7"
 };
 #define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
 #define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
@@ -79,7 +79,7 @@ void setup() {
   pinMode(button_boot.PIN, INPUT);
   attachInterrupt(button_boot.PIN, isr, RISING);
   Serial.begin(115200);
-  Serial.print("Active firmware version:");
+  Serial.print("Versao de firmware ativa:");
   Serial.println(FirmwareVer);
   //pinMode(LED_BUILTIN, OUTPUT);
   connect_wifi();
