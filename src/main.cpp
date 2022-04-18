@@ -9,7 +9,7 @@ const char * password = "miguel997";
 
 
 String FirmwareVer = {
-  "2.9"
+  "3.0"
 };
 #define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
 #define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
