@@ -37,13 +37,13 @@ void repeatedCall() {
   }
   if ((currentMillis - previousMillis_2) >= mini_interval) {
     previousMillis_2 = currentMillis;
-    Serial.print("idle loop...");
+    Serial.print("Loop IOT...");
     Serial.print(num++);
-    Serial.print(" Active fw version:");
+    Serial.print(" Versao de firmware ativa:");
     Serial.println(FirmwareVer);
    if(WiFi.status() == WL_CONNECTED) 
    {
-       Serial.println("wifi connected");
+       Serial.println("wifi connectado");
    }
    else
    {
@@ -86,7 +86,7 @@ void setup() {
 }
 void loop() {
   if (button_boot.pressed) { //to connect wifi via Android esp touch app 
-    Serial.println("Firmware update Starting..");
+    Serial.println("Iniciando a atualização do firmware..");
     firmwareUpdate();
     button_boot.pressed = false;
   }
@@ -94,7 +94,7 @@ void loop() {
 }
 
 void connect_wifi() {
-  Serial.println("Waiting for WiFi");
+  Serial.println("Aguardando Wi-Fi");
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -102,8 +102,8 @@ void connect_wifi() {
   }
 
   Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
+  Serial.println("Wi-Fi conectado");
+  Serial.println("Endereço de IP: ");
   Serial.println(WiFi.localIP());
 }
 
@@ -156,7 +156,7 @@ int FirmwareVersionCheck(void) {
       {
         payload = https.getString(); // save received version
       } else {
-        Serial.print("error in downloading version file:");
+        Serial.print("Erro ao baixar arquivo de versão:");
         Serial.println(httpCode);
       }
       https.end();
@@ -168,13 +168,13 @@ int FirmwareVersionCheck(void) {
   {
     payload.trim();
     if (payload.equals(FirmwareVer)) {
-      Serial.printf("\nDevice already on latest firmware version:%s\n", FirmwareVer);
+      Serial.printf("\nDispositivo já na versão de firmware mais recente:%s\n", FirmwareVer);
       return 0;
     } 
     else 
     {
       Serial.println(payload);
-      Serial.println("New firmware detected");
+      Serial.println("Novo firmware detectado");
       return 1;
     }
   } 
