@@ -4,15 +4,15 @@
 #include <WiFiClientSecure.h>
 #include "cert.h"
 
-const char * ssid = "home_wifi";
-const char * password = "helloworld";
+const char * ssid = "Miguel";
+const char * password = "miguel997";
 
 
 String FirmwareVer = {
-  "2.2"
+  "2.3"
 };
-#define URL_fw_Version "https://raw.githubusercontent.com/programmer131/ESP8266_ESP32_SelfUpdate/master/esp32_ota/bin_version.txt"
-#define URL_fw_Bin "https://raw.githubusercontent.com/programmer131/ESP8266_ESP32_SelfUpdate/master/esp32_ota/fw.bin"
+#define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
+#define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
 
 //#define URL_fw_Version "http://cade-make.000webhostapp.com/version.txt"
 //#define URL_fw_Bin "http://cade-make.000webhostapp.com/firmware.bin"
@@ -81,7 +81,7 @@ void setup() {
   Serial.begin(115200);
   Serial.print("Active firmware version:");
   Serial.println(FirmwareVer);
-  pinMode(LED_BUILTIN, OUTPUT);
+  //pinMode(LED_BUILTIN, OUTPUT);
   connect_wifi();
 }
 void loop() {
@@ -111,7 +111,7 @@ void connect_wifi() {
 void firmwareUpdate(void) {
   WiFiClientSecure client;
   client.setCACert(rootCACertificate);
-  httpUpdate.setLedPin(LED_BUILTIN, LOW);
+  //httpUpdate.setLedPin(LED_BUILTIN, LOW);
   t_httpUpdate_return ret = httpUpdate.update(client, URL_fw_Bin);
 
   switch (ret) {
