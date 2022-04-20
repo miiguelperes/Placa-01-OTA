@@ -3,8 +3,8 @@
 #include <HTTPUpdate.h>
 #include <WiFiClientSecure.h>
 #include "cert.h"
-#include "ArduinoJson.h"
-#include <Firebase_ESP_Client.h>
+#include <ArduinoJson.h>
+#include <MQTTClient.h>
 
 const char *ssid = "Miguel";
 const char *password = "miguel997";
@@ -14,22 +14,24 @@ String FirmwareVer = {
 
 #define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
 #define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
-#define FIREBASE_HOST "https://camaras-frias-default-rtdb.firebaseio.com"
+// O nome do dispositivo. Isso DEVE corresponder ao nome definido no console AWS
+#define DEVICE_NAME "placa-01"
 
-#define FIREBASE_AUTH "VrqFBtuYaHIcH8p2XIPlUjNAtNEqXvuETTtF7MHY"
-#define USER_EMAIL "mperes@rastreagro.com";
-#define USER_PASSWORD "Rastreagro.123";
-FirebaseData fbdo;
+// O endpoint MQTTT para o dispositivo (exclusivo para cada conta AWS, mas compartilhado entre os dispositivos dentro da conta)
+#define AWS_IOT_ENDPOINT "a3g40b8390y96b-ats.iot.us-east-1.amazonaws.com"
 
-FirebaseAuth auth;
+// O tópico MQTT em que este dispositivo deve publicar
+#define AWS_IOT_TOPIC "$aws/things/" DEVICE_NAME "/shadow/update"
 
-/* 5. Define the FirebaseConfig data for config data */
-FirebaseConfig config;
+// Quantas vezes devemos tentar nos conectar ao AWS
+#define AWS_MAX_RECONNECT_TRIES 50
 
-//#define URL_fw_Version "http://cade-make.000webhostapp.com/version.txt"
-//#define URL_fw_Bin "http://cade-make.000webhostapp.com/firmware.bin"
+WiFiClientSecure net = WiFiClientSecure();
+MQTTClient client = MQTTClient(512);
 
 void connect_wifi();
+void connectToAWS();
+void sendJsonToAWS();
 void firmwareUpdate();
 int FirmwareVersionCheck();
 
@@ -68,96 +70,82 @@ void repeatedCall()
   }
 }
 
-struct Button
-{
-  const uint8_t PIN;
-  uint32_t numberKeyPresses;
-  bool pressed;
-};
-
-Button button_boot = {
-    0,
-    0,
-    false};
-/*void IRAM_ATTR isr(void* arg) {
-    Button* s = static_cast<Button*>(arg);
-    s->numberKeyPresses += 1;
-    s->pressed = true;
-}*/
-
-void IRAM_ATTR isr()
-{
-  button_boot.numberKeyPresses += 1;
-  button_boot.pressed = true;
-}
 
 void setup()
 {
-  pinMode(button_boot.PIN, INPUT);
-  attachInterrupt(button_boot.PIN, isr, RISING);
   Serial.begin(115200);
   Serial.print("Versao de firmware ativa:");
   Serial.println(FirmwareVer);
-  //pinMode(LED_BUILTIN, OUTPUT);
   connect_wifi();
-
-
-
-
-  fbdo.setResponseSize(1024);
+  connectToAWS();
 }
+
 void loop()
 {
-  if (button_boot.pressed)
-  { //to connect wifi via Android esp touch app
-    Serial.println("Iniciando a atualização do firmware..");
-    firmwareUpdate();
-    button_boot.pressed = false;
-  }
+ 
   repeatedCall();
 
   if ((WiFi.status() == WL_CONNECTED))
   {
-
-      config.host = FIREBASE_HOST;
-  config.api_key = FIREBASE_AUTH;
-   config.max_token_generation_retry = 5000;
-  auth.user.email = USER_EMAIL;
-  auth.user.password = USER_PASSWORD;
- 
-  Firebase.reconnectWiFi(true);
-  Firebase.RTDB.setReadTimeout(&fbdo, 1000 * 60);
-  Firebase.RTDB.setwriteSizeLimit(&fbdo, "tiny");
-  Firebase.RTDB.setMaxRetry(&fbdo, 3000);
-  Firebase.RTDB.setMaxErrorQueue(&fbdo, 30);
-  Firebase.RTDB.enableClassicRequest(&fbdo, true);
-  Firebase.begin(&config, &auth);
-    
-    FirebaseJson json;
-    FirebaseJson json2;
-
-    json2.add("child_of_002", 123.456);
-    json.add("parent_001", "parent 001 text");
-    json.add("parent 002", json2);
-
-    if (Firebase.RTDB.pushJSON(&fbdo, "/test/append", &json)) {
-
-      Serial.println(fbdo.dataPath());
-
-      Serial.println(fbdo.pushName());
-
-      Serial.println(fbdo.dataPath() + "/"+ fbdo.pushName());
-
-    } else {
-      Serial.println(fbdo.errorReason());
-    }
-
+  sendJsonToAWS();
+    client.loop();
   }
   else
   {
     Serial.println("Conexão perdida");
   }
   delay(10000);
+}
+
+void sendJsonToAWS()
+{
+  StaticJsonDocument<256> jsonDoc;
+  JsonObject stateObj = jsonDoc.createNestedObject("state");
+  JsonObject reportedObj = stateObj.createNestedObject("reported");
+  
+  // Escreva a temperatura e umidade. Aqui você pode usar qualquer tipo C ++ (e pode se referir a variáveis)
+  reportedObj["temperature"] = 23.76;
+  reportedObj["humidity"] = 78.12;
+  reportedObj["wifi_strength"] = WiFi.RSSI();
+  
+  // Cria um objeto aninhado "local"
+  JsonObject locationObj = reportedObj.createNestedObject("location");
+  locationObj["name"] = "Garden";
+  char jsonBuffer[512];
+  Serial.println(jsonDoc.size());
+  serializeJson(jsonDoc, jsonBuffer);
+  // Publique a mensagem para AWS
+  client.publish(AWS_IOT_TOPIC, jsonBuffer);
+  
+  Serial.println("Json Enviado!");
+  Serial.println(client.lastError());
+}
+
+void connectToAWS()
+{
+    // Configure WiFiClientSecure para usar os certificados AWS que geramos
+    net.setCACert(AWS_CERT_CA);
+    net.setCertificate(AWS_CERT_CRT);
+    net.setPrivateKey(AWS_CERT_PRIVATE);
+    // Conecte-se ao corretor MQTT no endpoint AWS que definimos anteriormente
+    client.begin(AWS_IOT_ENDPOINT, 8883, net);
+    // Tente se conectar ao AWS e conte quantas vezes tentamos novamente.
+    int retries = 0;
+    Serial.print("Connecting to AWS IOT");
+    while (!client.connect(DEVICE_NAME) && retries < AWS_MAX_RECONNECT_TRIES) {
+        Serial.print(".");
+        delay(100);
+        retries++;
+    }
+    // Certifique-se de que realmente conectamos com sucesso ao broker MQTT
+        // Do contrário, apenas encerramos a função e aguardamos o próximo loop.
+    if(!client.connected()){
+        Serial.println(" Tempo esgotado!");
+        return;
+    }
+    // Se pousarmos aqui, nos conectamos com sucesso ao AWS!
+        // E podemos assinar tópicos e enviar mensagens.
+    Serial.println("Conectado!");
 }
 
 void connect_wifi()
@@ -174,14 +162,15 @@ void connect_wifi()
   Serial.println("Wi-Fi conectado");
   Serial.println("Endereço de IP: ");
   Serial.println(WiFi.localIP());
+  
 }
 
 void firmwareUpdate(void)
 {
-  WiFiClientSecure client;
-  client.setCACert(rootCACertificate);
+  WiFiClientSecure client2;
+  client2.setCACert(rootCACertificate);
   //httpUpdate.setLedPin(LED_BUILTIN, LOW);
-  t_httpUpdate_return ret = httpUpdate.update(client, URL_fw_Bin);
+  t_httpUpdate_return ret = httpUpdate.update(client2, URL_fw_Bin);
 
   switch (ret)
   {
@@ -207,16 +196,16 @@ int FirmwareVersionCheck(void)
   fwurl += "?";
   fwurl += String(rand());
   Serial.println(fwurl);
-  WiFiClientSecure *client = new WiFiClientSecure;
+  WiFiClientSecure *client2 = new WiFiClientSecure;
 
-  if (client)
+  if (client2)
   {
-    client->setCACert(rootCACertificate);
+    client2->setCACert(rootCACertificate);
 
     // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is
     HTTPClient https;
 
-    if (https.begin(*client, fwurl))
+    if (https.begin(*client2, fwurl))
     { // HTTPS
       Serial.print("[HTTPS] GET...\n");
       // start connection and send HTTP header
@@ -234,7 +223,7 @@ int FirmwareVersionCheck(void)
       }
       https.end();
     }
-    delete client;
+    delete client2;
   }
 
   if (httpCode == HTTP_CODE_OK) // if version received
