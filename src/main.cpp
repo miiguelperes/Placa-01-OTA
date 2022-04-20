@@ -10,7 +10,7 @@ const char *ssid = "Miguel";
 const char *password = "miguel997";
 
 String FirmwareVer = {
-    "3.1"};
+    "3.2"};
 
 #define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
 #define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
@@ -27,10 +27,10 @@ String FirmwareVer = {
 #define AWS_MAX_RECONNECT_TRIES 50
 
 WiFiClientSecure net = WiFiClientSecure();
-MQTTClient client = MQTTClient(512);
-
+MQTTClient client = MQTTClient();
 void connect_wifi();
 void connectToAWS();
+void lwMQTTErr(lwmqtt_err_t reason);
 void sendJsonToAWS();
 void firmwareUpdate();
 int FirmwareVersionCheck();
@@ -70,7 +70,6 @@ void repeatedCall()
   }
 }
 
-
 void setup()
 {
   Serial.begin(115200);
@@ -82,70 +81,106 @@ void setup()
 
 void loop()
 {
- 
+
   repeatedCall();
 
   if ((WiFi.status() == WL_CONNECTED))
   {
-  sendJsonToAWS();
-    client.loop();
+      if(!client.connected()){
+        connectToAWS();
+      }else{
+        sendJsonToAWS();
+      }
   }
   else
   {
     Serial.println("Conexão perdida");
+    connect_wifi();
   }
+  client.loop();
   delay(10000);
 }
 
 void sendJsonToAWS()
 {
-  StaticJsonDocument<256> jsonDoc;
-  JsonObject stateObj = jsonDoc.createNestedObject("state");
-  JsonObject reportedObj = stateObj.createNestedObject("reported");
+
+
   
-  // Escreva a temperatura e umidade. Aqui você pode usar qualquer tipo C ++ (e pode se referir a variáveis)
-  reportedObj["temperature"] = 23.76;
-  reportedObj["humidity"] = 78.12;
-  reportedObj["wifi_strength"] = WiFi.RSSI();
-  
-  // Cria um objeto aninhado "local"
-  JsonObject locationObj = reportedObj.createNestedObject("location");
-  locationObj["name"] = "Garden";
-  char jsonBuffer[512];
-  Serial.println(jsonDoc.size());
-  serializeJson(jsonDoc, jsonBuffer);
-  // Publique a mensagem para AWS
-  client.publish(AWS_IOT_TOPIC, jsonBuffer);
-  
-  Serial.println("Json Enviado!");
-  Serial.println(client.lastError());
+  DynamicJsonDocument jsonBuffer(JSON_OBJECT_SIZE(3) + 100);
+  JsonObject root = jsonBuffer.to<JsonObject>();
+  JsonObject state = root.createNestedObject("state");
+  JsonObject state_reported = state.createNestedObject("reported");
+  state_reported["value"] = random(100);
+  state_reported["fw_version"] = FirmwareVer;
+  Serial.printf("Sending  [%s]: ", AWS_IOT_TOPIC);
+  serializeJson(root, Serial);
+  Serial.println();
+  char shadow[measureJson(root) + 1];
+  serializeJson(root, shadow, sizeof(shadow));
+
+  if (!client.publish(AWS_IOT_TOPIC, shadow, false, 0))
+    lwMQTTErr(client.lastError());
+
+}
+void lwMQTTErr(lwmqtt_err_t reason)
+{
+  if (reason == lwmqtt_err_t::LWMQTT_SUCCESS)
+    Serial.print("Success");
+  else if (reason == lwmqtt_err_t::LWMQTT_BUFFER_TOO_SHORT)
+    Serial.print("Buffer too short");
+  else if (reason == lwmqtt_err_t::LWMQTT_VARNUM_OVERFLOW)
+    Serial.print("Varnum overflow");
+  else if (reason == lwmqtt_err_t::LWMQTT_NETWORK_FAILED_CONNECT)
+    Serial.print("Network failed connect");
+  else if (reason == lwmqtt_err_t::LWMQTT_NETWORK_TIMEOUT)
+    Serial.print("Network timeout");
+  else if (reason == lwmqtt_err_t::LWMQTT_NETWORK_FAILED_READ)
+    Serial.print("Network failed read");
+  else if (reason == lwmqtt_err_t::LWMQTT_NETWORK_FAILED_WRITE)
+    Serial.print("Network failed write");
+  else if (reason == lwmqtt_err_t::LWMQTT_REMAINING_LENGTH_OVERFLOW)
+    Serial.print("Remaining length overflow");
+  else if (reason == lwmqtt_err_t::LWMQTT_REMAINING_LENGTH_MISMATCH)
+    Serial.print("Remaining length mismatch");
+  else if (reason == lwmqtt_err_t::LWMQTT_MISSING_OR_WRONG_PACKET)
+    Serial.print("Missing or wrong packet");
+  else if (reason == lwmqtt_err_t::LWMQTT_CONNECTION_DENIED)
+    Serial.print("Connection denied");
+  else if (reason == lwmqtt_err_t::LWMQTT_FAILED_SUBSCRIPTION)
+    Serial.print("Failed subscription");
+  else if (reason == lwmqtt_err_t::LWMQTT_SUBACK_ARRAY_OVERFLOW)
+    Serial.print("Suback array overflow");
+  else if (reason == lwmqtt_err_t::LWMQTT_PONG_TIMEOUT)
+    Serial.print("Pong timeout");
 }
 
 void connectToAWS()
 {
-    // Configure WiFiClientSecure para usar os certificados AWS que geramos
-    net.setCACert(AWS_CERT_CA);
-    net.setCertificate(AWS_CERT_CRT);
-    net.setPrivateKey(AWS_CERT_PRIVATE);
-    // Conecte-se ao corretor MQTT no endpoint AWS que definimos anteriormente
-    client.begin(AWS_IOT_ENDPOINT, 8883, net);
-    // Tente se conectar ao AWS e conte quantas vezes tentamos novamente.
-    int retries = 0;
-    Serial.print("Connecting to AWS IOT");
-    while (!client.connect(DEVICE_NAME) && retries < AWS_MAX_RECONNECT_TRIES) {
-        Serial.print(".");
-        delay(100);
-        retries++;
-    }
-    // Certifique-se de que realmente conectamos com sucesso ao broker MQTT
-        // Do contrário, apenas encerramos a função e aguardamos o próximo loop.
-    if(!client.connected()){
-        Serial.println(" Tempo esgotado!");
-        return;
-    }
-    // Se pousarmos aqui, nos conectamos com sucesso ao AWS!
-        // E podemos assinar tópicos e enviar mensagens.
-    Serial.println("Conectado!");
+  // Configure WiFiClientSecure para usar os certificados AWS que geramos
+  net.setCACert(AWS_CERT_CA);
+  net.setCertificate(AWS_CERT_CRT);
+  net.setPrivateKey(AWS_CERT_PRIVATE);
+  // Conecte-se ao corretor MQTT no endpoint AWS que definimos anteriormente
+  client.begin(AWS_IOT_ENDPOINT, 8883, net);
+  // Tente se conectar ao AWS e conte quantas vezes tentamos novamente.
+  int retries = 0;
+  Serial.print("Connecting to AWS IOT");
+  while (!client.connect(DEVICE_NAME) && retries < AWS_MAX_RECONNECT_TRIES)
+  {
+    Serial.print(".");
+    delay(100);
+    retries++;
+  }
+  // Certifique-se de que realmente conectamos com sucesso ao broker MQTT
+  // Do contrário, apenas encerramos a função e aguardamos o próximo loop.
+  if (!client.connected())
+  {
+    Serial.println(" Tempo esgotado!");
+    return;
+  }
+  // Se pousarmos aqui, nos conectamos com sucesso ao AWS!
+  // E podemos assinar tópicos e enviar mensagens.
+  Serial.println("Conectado!");
 }
 
 void connect_wifi()
@@ -162,7 +197,6 @@ void connect_wifi()
   Serial.println("Wi-Fi conectado");
   Serial.println("Endereço de IP: ");
   Serial.println(WiFi.localIP());
-  
 }
 
 void firmwareUpdate(void)
@@ -187,6 +221,8 @@ void firmwareUpdate(void)
     break;
   }
 }
+
+
 int FirmwareVersionCheck(void)
 {
   String payload;
