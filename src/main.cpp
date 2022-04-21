@@ -15,7 +15,7 @@ const char *ssid = "Miguel";
 const char *password = "miguel997";
 
 String FirmwareVer = {
-    "3.3"};
+    "3.4"};
 
 #define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
 #define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
@@ -36,7 +36,7 @@ const char simPIN[] = "";
 
 // Your phone number to send SMS: + (plus sign) and country code, for Portugal +351, followed by phone number
 // SMS_TARGET Example for Portugal +351XXXXXXXXX
-#define SMS_TARGET "+5534991536120"
+#define SMS_TARGET "+5534999280331"
 
 
 
@@ -149,7 +149,7 @@ void connectGSM()
   // Desbloqueie seu cartão SIM com um PIN, se necessário
   SerialMon.println(modem.getIMEI());
   // Para enviar um SMS, ligue para modem.sendSMS(SMS_TARGET, smsMessage)
-  String smsMessage = "Olá, eu sou o a inteligencia da plaquinha, essa é uma mensagem de teste :D";
+  String smsMessage = "Olá Catharina, você acaba de ganhar a promoção VALE1000BEIJOS! Retire seu prêmio no posto boiadeiro às 00:20! ";
   if (modem.sendSMS(SMS_TARGET, smsMessage))
   {
     SerialMon.println(smsMessage);
