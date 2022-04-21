@@ -1,16 +1,21 @@
 #include <WiFi.h>
+#include <Arduino.h>
 #include <HTTPClient.h>
 #include <HTTPUpdate.h>
 #include <WiFiClientSecure.h>
 #include "cert.h"
 #include <ArduinoJson.h>
 #include <MQTTClient.h>
-
+// Configure TinyGSM library
+#define TINY_GSM_MODEM_SIM800   // Modem is SIM800
+#define TINY_GSM_RX_BUFFER 1024 // Set RX buffer to 1Kb
+#include <Wire.h>
+#include <TinyGsmClient.h>
 const char *ssid = "Miguel";
 const char *password = "miguel997";
 
 String FirmwareVer = {
-    "3.2"};
+    "3.3"};
 
 #define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
 #define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
@@ -26,55 +31,67 @@ String FirmwareVer = {
 // Quantas vezes devemos tentar nos conectar ao AWS
 #define AWS_MAX_RECONNECT_TRIES 50
 
+// SIM card PIN (leave empty, if not defined)
+const char simPIN[] = "";
+
+// Your phone number to send SMS: + (plus sign) and country code, for Portugal +351, followed by phone number
+// SMS_TARGET Example for Portugal +351XXXXXXXXX
+#define SMS_TARGET "+5534991536120"
+
+
+
+// TTGO T-Call pins
+#define MODEM_RST 2
+#define MODEM_PWKEY 4
+#define MODEM_POWER_ON 23
+#define MODEM_TX 27
+#define MODEM_RX 26
+#define I2C_SDA 21
+#define I2C_SCL 22
+
+// Set serial for debug console (to Serial Monitor, default speed 115200)
+#define SerialMon Serial
+// Set serial for AT commands (to SIM800 module)
+#define SerialAT Serial1
+
+// Define the serial console for debug prints, if needed
+//#define DUMP_AT_COMMANDS
+
+#ifdef DUMP_AT_COMMANDS
+#include <StreamDebugger.h>
+StreamDebugger debugger(SerialAT, SerialMon);
+TinyGsm modem(debugger);
+#else
+TinyGsm modem(SerialAT);
+#endif
+
+#define IP5306_ADDR 0x75
+#define IP5306_REG_SYS_CTL0 0x00
+
+
 WiFiClientSecure net = WiFiClientSecure();
 MQTTClient client = MQTTClient();
+
 void connect_wifi();
 void connectToAWS();
 void lwMQTTErr(lwmqtt_err_t reason);
 void sendJsonToAWS();
 void firmwareUpdate();
+void repeatedCall();
+void connectGSM();
 int FirmwareVersionCheck();
 
 unsigned long previousMillis = 0; // will store last time LED was updated
 unsigned long previousMillis_2 = 0;
 const long interval = 60000;
 const long mini_interval = 1000;
-void repeatedCall()
-{
-  static int num = 0;
-  unsigned long currentMillis = millis();
-  if ((currentMillis - previousMillis) >= interval)
-  {
-    // save the last time you blinked the LED
-    previousMillis = currentMillis;
-    if (FirmwareVersionCheck())
-    {
-      firmwareUpdate();
-    }
-  }
-  if ((currentMillis - previousMillis_2) >= mini_interval)
-  {
-    previousMillis_2 = currentMillis;
-    Serial.print("Loop IOT...");
-    Serial.print(num++);
-    Serial.print(" Versao de firmware ativa:");
-    Serial.println(FirmwareVer);
-    if (WiFi.status() == WL_CONNECTED)
-    {
-      Serial.println("wifi connectado");
-    }
-    else
-    {
-      connect_wifi();
-    }
-  }
-}
 
 void setup()
 {
   Serial.begin(115200);
   Serial.print("Versao de firmware ativa:");
   Serial.println(FirmwareVer);
+  connectGSM();
   connect_wifi();
   connectToAWS();
 }
@@ -86,11 +103,14 @@ void loop()
 
   if ((WiFi.status() == WL_CONNECTED))
   {
-      if(!client.connected()){
-        connectToAWS();
-      }else{
-        sendJsonToAWS();
-      }
+    if (!client.connected())
+    {
+      connectToAWS();
+    }
+    else
+    {
+      sendJsonToAWS();
+    }
   }
   else
   {
@@ -100,28 +120,63 @@ void loop()
   client.loop();
   delay(10000);
 }
-
-void sendJsonToAWS()
+void connectGSM()
 {
 
+  // Mantenha a energia ao funcionar a partir da bateria
+  Wire.begin(I2C_SDA, I2C_SCL);
 
-  
+  // Definir redefinição do modem, habilitar, pinos de energia
+  pinMode(MODEM_PWKEY, OUTPUT);
+  pinMode(MODEM_RST, OUTPUT);
+  pinMode(33, INPUT);
+  pinMode(35, INPUT);
+  pinMode(25, OUTPUT);
+  pinMode(MODEM_POWER_ON, OUTPUT);
+  digitalWrite(MODEM_PWKEY, LOW);
+  digitalWrite(MODEM_RST, HIGH);
+  digitalWrite(MODEM_POWER_ON, HIGH);
+
+  // Defina a taxa de transmissão do módulo GSM e os pinos UART
+  SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
+  delay(3000);
+  digitalWrite(25, HIGH);
+  // Reinicie o módulo SIM800, leva algum tempo
+  // Para ignorá-lo, chame init() em vez de restart()
+  SerialMon.println("Inicializando modem...");
+  modem.restart();
+  // use modem.init() se você não precisar da reinicialização completa
+  // Desbloqueie seu cartão SIM com um PIN, se necessário
+  SerialMon.println(modem.getIMEI());
+  // Para enviar um SMS, ligue para modem.sendSMS(SMS_TARGET, smsMessage)
+  String smsMessage = "Olá, eu sou o a inteligencia da plaquinha, essa é uma mensagem de teste :D";
+  if (modem.sendSMS(SMS_TARGET, smsMessage))
+  {
+    SerialMon.println(smsMessage);
+  }
+  else
+  {
+    SerialMon.println("Erro ao enviar sms");
+  }
+}
+void sendJsonToAWS()
+{
   DynamicJsonDocument jsonBuffer(JSON_OBJECT_SIZE(3) + 100);
   JsonObject root = jsonBuffer.to<JsonObject>();
   JsonObject state = root.createNestedObject("state");
   JsonObject state_reported = state.createNestedObject("reported");
   state_reported["value"] = random(100);
   state_reported["fw_version"] = FirmwareVer;
+  state_reported["imei"] = modem.getIMEI();
   Serial.printf("Sending  [%s]: ", AWS_IOT_TOPIC);
   serializeJson(root, Serial);
   Serial.println();
   char shadow[measureJson(root) + 1];
   serializeJson(root, shadow, sizeof(shadow));
-
   if (!client.publish(AWS_IOT_TOPIC, shadow, false, 0))
     lwMQTTErr(client.lastError());
-
 }
+
 void lwMQTTErr(lwmqtt_err_t reason)
 {
   if (reason == lwmqtt_err_t::LWMQTT_SUCCESS)
@@ -154,6 +209,36 @@ void lwMQTTErr(lwmqtt_err_t reason)
     Serial.print("Pong timeout");
 }
 
+void repeatedCall()
+{
+  static int num = 0;
+  unsigned long currentMillis = millis();
+  if ((currentMillis - previousMillis) >= interval)
+  {
+    // save the last time you blinked the LED
+    previousMillis = currentMillis;
+    if (FirmwareVersionCheck())
+    {
+      firmwareUpdate();
+    }
+  }
+  if ((currentMillis - previousMillis_2) >= mini_interval)
+  {
+    previousMillis_2 = currentMillis;
+    Serial.print("Loop IOT...");
+    Serial.print(num++);
+    Serial.print(" Versao de firmware ativa:");
+    Serial.println(FirmwareVer);
+    if (WiFi.status() == WL_CONNECTED)
+    {
+      Serial.println("wifi connectado");
+    }
+    else
+    {
+      connect_wifi();
+    }
+  }
+}
 void connectToAWS()
 {
   // Configure WiFiClientSecure para usar os certificados AWS que geramos
@@ -221,7 +306,6 @@ void firmwareUpdate(void)
     break;
   }
 }
-
 
 int FirmwareVersionCheck(void)
 {
