@@ -15,7 +15,7 @@ const char *ssid = "Miguel";
 const char *password = "miguel997";
 
 String FirmwareVer = {
-    "3.8"};
+    "3.9"};
 
 #define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
 #define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
@@ -149,7 +149,7 @@ void connectGSM()
   // Desbloqueie seu cartão SIM com um PIN, se necessário
   SerialMon.println(modem.getIMEI());
   // Para enviar um SMS, ligue para modem.sendSMS(SMS_TARGET, smsMessage)
-  String smsMessage = "Teste IOT Miguel";
+  String smsMessage = "Teste IOT Miguel. Versão: "+FirmwareVer;
   if (modem.sendSMS(SMS_TARGET, smsMessage))
   {
     SerialMon.println(smsMessage);
@@ -168,10 +168,7 @@ void sendJsonToAWS()
   state_reported["value"] = random(100);
   state_reported["fw_version"] = FirmwareVer;
   state_reported["imei"] = modem.getIMEI();
-  /*state_reported["batt_percent"] = modem.getBattPercent();*/
-  /* state_reported["gsm_local_ip"] = modem.getLocalIP(); */
-  state_reported["signal_quality"] = modem.getSignalQuality();
- /* state_reported["gsm_location"] = modem.getGsmLocation();*/
+
   Serial.printf("Sending  [%s]: ", AWS_IOT_TOPIC);
   serializeJson(root, Serial);
   Serial.println();
