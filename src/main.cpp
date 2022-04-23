@@ -15,7 +15,7 @@ const char *ssid = "Miguel";
 const char *password = "miguel997";
 
 String FirmwareVer = {
-    "3.7"};
+    "3.8"};
 
 #define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
 #define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
@@ -169,7 +169,7 @@ void sendJsonToAWS()
   state_reported["fw_version"] = FirmwareVer;
   state_reported["imei"] = modem.getIMEI();
   /*state_reported["batt_percent"] = modem.getBattPercent();*/
-  state_reported["gsm_local_ip"] = modem.getLocalIP();
+  /* state_reported["gsm_local_ip"] = modem.getLocalIP(); */
   state_reported["signal_quality"] = modem.getSignalQuality();
  /* state_reported["gsm_location"] = modem.getGsmLocation();*/
   Serial.printf("Sending  [%s]: ", AWS_IOT_TOPIC);
