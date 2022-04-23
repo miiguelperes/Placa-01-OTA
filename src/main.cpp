@@ -15,7 +15,7 @@ const char *ssid = "Miguel";
 const char *password = "miguel997";
 
 String FirmwareVer = {
-    "3.5"};
+    "3.6"};
 
 #define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
 #define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
@@ -36,7 +36,7 @@ const char simPIN[] = "";
 
 // Your phone number to send SMS: + (plus sign) and country code, for Portugal +351, followed by phone number
 // SMS_TARGET Example for Portugal +351XXXXXXXXX
-#define SMS_TARGET "+5534999280331"
+#define SMS_TARGET "+5534993070143"
 
 
 
@@ -118,7 +118,7 @@ void loop()
     connect_wifi();
   }
   client.loop();
-  delay(30000);
+  delay(15000);
 }
 void connectGSM()
 {
@@ -149,7 +149,7 @@ void connectGSM()
   // Desbloqueie seu cartão SIM com um PIN, se necessário
   SerialMon.println(modem.getIMEI());
   // Para enviar um SMS, ligue para modem.sendSMS(SMS_TARGET, smsMessage)
-  String smsMessage = "Olá Catharina, você acaba de ganhar a promoção VALE1000BEIJOS! Retire seu prêmio no posto boiadeiro às 00:20! ";
+  String smsMessage = "Teste IOT Miguel";
   if (modem.sendSMS(SMS_TARGET, smsMessage))
   {
     SerialMon.println(smsMessage);
@@ -168,7 +168,6 @@ void sendJsonToAWS()
   state_reported["value"] = random(100);
   state_reported["fw_version"] = FirmwareVer;
   state_reported["imei"] = modem.getIMEI();
-  state_reported["batt_charge_state"] = modem.getBattChargeState();
   state_reported["batt_percent"] = modem.getBattPercent();
   state_reported["gsm_local_ip"] = modem.getLocalIP();
   state_reported["signal_quality"] = modem.getSignalQuality();
@@ -252,6 +251,7 @@ void connectToAWS()
   net.setPrivateKey(AWS_CERT_PRIVATE);
   // Conecte-se ao corretor MQTT no endpoint AWS que definimos anteriormente
   client.begin(AWS_IOT_ENDPOINT, 8883, net);
+  client.setKeepAlive(15000);
   // Tente se conectar ao AWS e conte quantas vezes tentamos novamente.
   int retries = 0;
   Serial.print("Connecting to AWS IOT");
