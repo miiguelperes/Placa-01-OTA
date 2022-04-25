@@ -19,7 +19,7 @@ const char *password = "miguel997";
  const char gprsUser[] = "wap";
  const char gprsPass[] = "wap";
 String FirmwareVer = {
-    "4.0"};
+    "4.1"};
 
 #define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
 #define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
@@ -206,7 +206,6 @@ void sendJsonToAWS()
   state_reported["value"] = random(100);
   state_reported["fw_version"] = FirmwareVer;
   state_reported["imei"] = modem.getIMEI();
-  state_reported["signal_quality"] = modem.getSignalQuality();
   state_reported["ip_local_wifi"] = WiFi.localIP();
 
   Serial.printf("Sending  [%s]: ", AWS_IOT_TOPIC);
