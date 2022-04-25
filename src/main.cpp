@@ -1,5 +1,6 @@
 #include <WiFi.h>
 #include <Arduino.h>
+#include <ArduinoOTA.h>
 #include <HTTPClient.h>
 #include <HTTPUpdate.h>
 #include <WiFiClientSecure.h>
@@ -13,9 +14,12 @@
 #include <TinyGsmClient.h>
 const char *ssid = "Miguel";
 const char *password = "miguel997";
-
+ // Your GPRS credentials, if any
+ const char apn[]      = "uk.lebara.mobi";
+ const char gprsUser[] = "wap";
+ const char gprsPass[] = "wap";
 String FirmwareVer = {
-    "3.9"};
+    "4.0"};
 
 #define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
 #define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
@@ -78,6 +82,7 @@ void lwMQTTErr(lwmqtt_err_t reason);
 void sendJsonToAWS();
 void firmwareUpdate();
 void repeatedCall();
+void configOTA();
 void connectGSM();
 int FirmwareVersionCheck();
 
@@ -93,16 +98,20 @@ void setup()
   Serial.println(FirmwareVer);
   connectGSM();
   connect_wifi();
+  configOTA();
   connectToAWS();
 }
+
+
 
 void loop()
 {
 
   repeatedCall();
-
+  ArduinoOTA.handle();
   if ((WiFi.status() == WL_CONNECTED))
   {
+    
     if (!client.connected())
     {
       connectToAWS();
@@ -120,6 +129,35 @@ void loop()
   client.loop();
   delay(15000);
 }
+
+void configOTA(){
+    ArduinoOTA
+    .onStart([]() {
+      String type;
+      if (ArduinoOTA.getCommand() == U_FLASH)
+        type = "sketch";
+      else // U_SPIFFS
+        type = "filesystem";
+      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+      Serial.println("Start updating " + type);
+    })
+    .onEnd([]() {
+      Serial.println("nEnd");
+    })
+    .onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("Progress: %u%%r", (progress / (total / 100)));
+    })
+    .onError([](ota_error_t error) {
+      Serial.printf("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+  ArduinoOTA.begin();
+}
+
 void connectGSM()
 {
 
@@ -149,7 +187,7 @@ void connectGSM()
   // Desbloqueie seu cartão SIM com um PIN, se necessário
   SerialMon.println(modem.getIMEI());
   // Para enviar um SMS, ligue para modem.sendSMS(SMS_TARGET, smsMessage)
-  String smsMessage = "Teste IOT Miguel. Versão: "+FirmwareVer;
+  String smsMessage = "Teste IOT Miguel. Versao: "+FirmwareVer;
   if (modem.sendSMS(SMS_TARGET, smsMessage))
   {
     SerialMon.println(smsMessage);
@@ -168,6 +206,8 @@ void sendJsonToAWS()
   state_reported["value"] = random(100);
   state_reported["fw_version"] = FirmwareVer;
   state_reported["imei"] = modem.getIMEI();
+  state_reported["signal_quality"] = modem.getSignalQuality();
+  state_reported["ip_local_wifi"] = WiFi.localIP();
 
   Serial.printf("Sending  [%s]: ", AWS_IOT_TOPIC);
   serializeJson(root, Serial);
