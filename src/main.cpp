@@ -1,205 +1,202 @@
-#include <WiFi.h>
-#include <Arduino.h>
-#include <ArduinoOTA.h>
-#include <HTTPClient.h>
-#include <HTTPUpdate.h>
-#include <WiFiClientSecure.h>
-#include "cert.h"
-#include <ArduinoJson.h>
-#include <MQTTClient.h>
-// Configure TinyGSM library
-#define TINY_GSM_MODEM_SIM800   // Modem is SIM800
-#define TINY_GSM_RX_BUFFER 1024 // Set RX buffer to 1Kb
-#include <Wire.h>
-#include <TinyGsmClient.h>
-const char *ssid = "Miguel";
-const char *password = "miguel997";
- // Your GPRS credentials, if any
- const char apn[]      = "uk.lebara.mobi";
- const char gprsUser[] = "wap";
- const char gprsPass[] = "wap";
-String FirmwareVer = {
-    "4.1"};
-
-#define URL_fw_Version "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/bin_version.txt"
-#define URL_fw_Bin "https://raw.githubusercontent.com/miiguelperes/Placa-01-OTA/main/fw.bin"
-// O nome do dispositivo. Isso DEVE corresponder ao nome definido no console AWS
-#define DEVICE_NAME "placa-01"
-
-// O endpoint MQTTT para o dispositivo (exclusivo para cada conta AWS, mas compartilhado entre os dispositivos dentro da conta)
-#define AWS_IOT_ENDPOINT "a3g40b8390y96b-ats.iot.us-east-1.amazonaws.com"
-
-// O tópico MQTT em que este dispositivo deve publicar
-#define AWS_IOT_TOPIC "$aws/things/" DEVICE_NAME "/shadow/update"
-
-// Quantas vezes devemos tentar nos conectar ao AWS
-#define AWS_MAX_RECONNECT_TRIES 50
-
-// SIM card PIN (leave empty, if not defined)
-const char simPIN[] = "";
-
-// Your phone number to send SMS: + (plus sign) and country code, for Portugal +351, followed by phone number
-// SMS_TARGET Example for Portugal +351XXXXXXXXX
-#define SMS_TARGET "+5534993070143"
-
-
-
-// TTGO T-Call pins
+/*************************GSM macros******************************/
+#define TINY_GSM_MODEM_SIM800
 #define MODEM_RST 2
 #define MODEM_PWKEY 4
 #define MODEM_POWER_ON 23
 #define MODEM_TX 27
 #define MODEM_RX 26
-#define I2C_SDA 21
-#define I2C_SCL 22
-
-// Set serial for debug console (to Serial Monitor, default speed 115200)
-#define SerialMon Serial
-// Set serial for AT commands (to SIM800 module)
+#define GSM_PIN ""
 #define SerialAT Serial1
+/*****************************************************************/
 
-// Define the serial console for debug prints, if needed
-//#define DUMP_AT_COMMANDS
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <EEPROM.h>
+#include <TinyGsmClient.h>
+#include "Credentials.h"
+#include "secrets.h"
+#include <MQTT.h>
+#include <MQTTClient.h>
+#include <SSLClient.h>
+//#include "cert.h"
+//#include <WiFiClientSecure.h>
 
-#ifdef DUMP_AT_COMMANDS
-#include <StreamDebugger.h>
-StreamDebugger debugger(SerialAT, SerialMon);
-TinyGsm modem(debugger);
-#else
+/*************************Variable decleration********************/
+String FirmwareVer = {
+    "4.1"};
+String ap_mode_ssid_ = "Cybene";
+char ap_mode_ssid[35];
+char ap_mode_password[] = "Cybene@123";
+String macID = "";
+char jsonBuffer[512];
+String name = "CONF/SN-";
+String UUID = "";
+String broker_id = "";
+String broker_password = "";
+char broker_id_char[15];
+char broker_password_char[15];
+
+bool connected_to_internet = 0;
+const char mqtt_server[] = "a3g40b8390y96b-ats.iot.us-east-1.amazonaws.com";
+bool wifi_connected = true;
+bool gprs_connected = false;
+const char apn[] = "allcom.vivo.com.br";
+const char gprsUser[] = "allcom";
+const char gprsPass[] = "allcom";
+/*****************************************************************/
+/************************************AWS parameters***************/
+#define DEVICE_NAME "placa-01"
+#define AWS_IOT_ENDPOINT "a3g40b8390y96b-ats.iot.us-east-1.amazonaws.com"
+#define AWS_IOT_TOPIC "$aws/things/" DEVICE_NAME "/shadow/update"
+#define AWS_MAX_RECONNECT_TRIES 50
+/**********************************Objects************************/
+WiFiClient wifi_client;
 TinyGsm modem(SerialAT);
-#endif
+TinyGsmClient gsm_client(modem);
+SSLClient modemGSMSSL(&gsm_client);
+SSLClient net(&wifi_client);
+PubSubClient wifi_mqtt(wifi_client);
+PubSubClient gsm_mqtt(gsm_client);
+//WiFiClientSecure net = WiFiClientSecure();
+MQTTClient client = MQTTClient(512);
+credentials cred;
 
-#define IP5306_ADDR 0x75
-#define IP5306_REG_SYS_CTL0 0x00
-
-
-WiFiClientSecure net = WiFiClientSecure();
-MQTTClient client = MQTTClient();
-
-void connect_wifi();
+void setup_gprs();
 void connectToAWS();
+void modem_init();
+void WiFiStationConnected(WiFiEvent_t event, WiFiEventInfo_t info);
+void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info);
+String read_uuid();
+String read_userid();
+String read_password();
+void messageReceived(String &topic, String &payload);
+void WiFi_client_connect();
+void Send_json_to_broker();
+bool Gsm_client_connect();
 void lwMQTTErr(lwmqtt_err_t reason);
-void sendJsonToAWS();
-void firmwareUpdate();
-void repeatedCall();
-void configOTA();
-void connectGSM();
-int FirmwareVersionCheck();
-
-unsigned long previousMillis = 0; // will store last time LED was updated
-unsigned long previousMillis_2 = 0;
-const long interval = 60000;
-const long mini_interval = 1000;
 
 void setup()
 {
   Serial.begin(115200);
-  Serial.print("Versao de firmware ativa:");
-  Serial.println(FirmwareVer);
-  connectGSM();
-  connect_wifi();
-  configOTA();
-  connectToAWS();
+
+  modem_init();
+  setup_gprs();
+  Serial.println(macID = WiFi.macAddress());
+  ap_mode_ssid_ += macID;
+  Serial.println(ap_mode_ssid_);
+  ap_mode_ssid_.toCharArray(ap_mode_ssid, 35);
+  Serial.println(ap_mode_ssid);
+
+  name += macID;
+  Serial.println(name);
+  cred.EEPROM_Config();
+  // cred.Erase_eeprom();
+
+  WiFi.onEvent(WiFiStationConnected, ARDUINO_EVENT_WIFI_AP_STACONNECTED);
+  WiFi.onEvent(WiFiStationDisconnected, ARDUINO_EVENT_WIFI_AP_STADISCONNECTED);
+  if (cred.credentials_get())
+  {
+    connected_to_internet = 1;
+  }
+  else
+  {
+    cred.setupAP(ap_mode_ssid, ap_mode_password);
+    connected_to_internet = 0;
+  }
+  if (connected_to_internet == 1)
+  {
+
+    Serial.println(UUID = read_uuid());
+    Serial.println(broker_id = read_userid());
+    Serial.println(broker_password = read_password());
+    broker_id.toCharArray(broker_id_char, 15);
+    broker_password.toCharArray(broker_password_char, 15);
+    connectToAWS();
+    //client.subscribe(name);
+    //client.onMessage(messageReceived);
+  }
 }
-
-
-
 void loop()
 {
-
-  repeatedCall();
-  ArduinoOTA.handle();
-  if ((WiFi.status() == WL_CONNECTED))
+    client.loop();
+  if(!client.connected()){
+    connectToAWS();
+  }
+  Serial.println("conectado: "+client.connected());
+  Serial.println("gprs_connected: "+gprs_connected);
+  if (gprs_connected)
   {
-    
-    if (!client.connected())
+   /*  Serial.println("gsm_mqtt: "+gsm_mqtt.connected());
+    if (!gsm_mqtt.connected())
     {
-      connectToAWS();
+      Gsm_client_connect();
+    } */
+
+    Send_json_to_broker();
+    gsm_mqtt.loop();
+  }
+  if (connected_to_internet && int(EEPROM.read(250)) == 1)
+  {
+    if (!wifi_mqtt.connected() && wifi_connected == true)
+    {
+      WiFi_client_connect();
+    }
+    // Send_json_to_broker();
+    wifi_mqtt.loop();
+  }
+
+  cred.server_loops();
+
+  delay(5000);
+}
+/*****************************************************************/
+/*************************WiFi client-broker connect**************/
+void WiFi_client_connect()
+{
+  while (!wifi_mqtt.connected())
+  {
+    Serial.println("Attempting MQTT connection..");
+
+    boolean stat = wifi_mqtt.connect("ESP32_MQTT_Client", broker_id_char, broker_password_char);
+    //    boolean stat;
+    if (stat == true)
+    {
+      Serial.print("connected to mqtt server=");
+      Serial.println(mqtt_server);
     }
     else
     {
-      sendJsonToAWS();
+      Serial.print("failed, rc=");
+      Serial.print(wifi_mqtt.state());
+      Serial.println("try again in 5 seconds");
+      EEPROM.write(250, 0);
+      delay(5000);
     }
   }
-  else
-  {
-    Serial.println("Conexão perdida");
-    connect_wifi();
-  }
-  client.loop();
-  delay(15000);
 }
 
-void configOTA(){
-    ArduinoOTA
-    .onStart([]() {
-      String type;
-      if (ArduinoOTA.getCommand() == U_FLASH)
-        type = "sketch";
-      else // U_SPIFFS
-        type = "filesystem";
-      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
-      Serial.println("Start updating " + type);
-    })
-    .onEnd([]() {
-      Serial.println("nEnd");
-    })
-    .onProgress([](unsigned int progress, unsigned int total) {
-      Serial.printf("Progress: %u%%r", (progress / (total / 100)));
-    })
-    .onError([](ota_error_t error) {
-      Serial.printf("Error[%u]: ", error);
-      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-      else if (error == OTA_END_ERROR) Serial.println("End Failed");
-    });
-  ArduinoOTA.begin();
-}
-
-void connectGSM()
+/***********************GSM client-broker connect******************/
+bool Gsm_client_connect()
 {
+  Serial.print("Connecting to:");
+  Serial.print(mqtt_server);
 
-  // Mantenha a energia ao funcionar a partir da bateria
-  Wire.begin(I2C_SDA, I2C_SCL);
+  boolean status = gsm_mqtt.connect(AWS_IOT_TOPIC);
 
-  // Definir redefinição do modem, habilitar, pinos de energia
-  pinMode(MODEM_PWKEY, OUTPUT);
-  pinMode(MODEM_RST, OUTPUT);
-  pinMode(33, INPUT);
-  pinMode(35, INPUT);
-  pinMode(25, OUTPUT);
-  pinMode(MODEM_POWER_ON, OUTPUT);
-  digitalWrite(MODEM_PWKEY, LOW);
-  digitalWrite(MODEM_RST, HIGH);
-  digitalWrite(MODEM_POWER_ON, HIGH);
-
-  // Defina a taxa de transmissão do módulo GSM e os pinos UART
-  SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
-  delay(3000);
-  digitalWrite(25, HIGH);
-  // Reinicie o módulo SIM800, leva algum tempo
-  // Para ignorá-lo, chame init() em vez de restart()
-  SerialMon.println("Inicializando modem...");
-  modem.restart();
-  // use modem.init() se você não precisar da reinicialização completa
-  // Desbloqueie seu cartão SIM com um PIN, se necessário
-  SerialMon.println(modem.getIMEI());
-  // Para enviar um SMS, ligue para modem.sendSMS(SMS_TARGET, smsMessage)
-  String smsMessage = "Teste IOT Miguel. Versao: "+FirmwareVer;
-  if (modem.sendSMS(SMS_TARGET, smsMessage))
+  if (status == false)
   {
-    SerialMon.println(smsMessage);
+    Serial.println("fail");
+    EEPROM.write(250, 0);
+    return false;
   }
-  else
-  {
-    SerialMon.println("Erro ao enviar sms");
-  }
+  Serial.println("Success");
+  return true;
 }
-void sendJsonToAWS()
+
+void Send_json_to_broker()
 {
-  DynamicJsonDocument jsonBuffer(JSON_OBJECT_SIZE(3) + 100);
+  DynamicJsonDocument jsonBuffer(JSON_OBJECT_SIZE(6) + 100);
   JsonObject root = jsonBuffer.to<JsonObject>();
   JsonObject state = root.createNestedObject("state");
   JsonObject state_reported = state.createNestedObject("reported");
@@ -207,16 +204,18 @@ void sendJsonToAWS()
   state_reported["fw_version"] = FirmwareVer;
   state_reported["imei"] = modem.getIMEI();
   state_reported["ip_local_wifi"] = WiFi.localIP();
+  state_reported["gprs_connected"] = gprs_connected ? 1 : 0;
+  state_reported["ip_local_gprs"] = modem.getLocalIP();
 
   Serial.printf("Sending  [%s]: ", AWS_IOT_TOPIC);
   serializeJson(root, Serial);
   Serial.println();
   char shadow[measureJson(root) + 1];
   serializeJson(root, shadow, sizeof(shadow));
+
   if (!client.publish(AWS_IOT_TOPIC, shadow, false, 0))
     lwMQTTErr(client.lastError());
 }
-
 void lwMQTTErr(lwmqtt_err_t reason)
 {
   if (reason == lwmqtt_err_t::LWMQTT_SUCCESS)
@@ -248,159 +247,163 @@ void lwMQTTErr(lwmqtt_err_t reason)
   else if (reason == lwmqtt_err_t::LWMQTT_PONG_TIMEOUT)
     Serial.print("Pong timeout");
 }
-
-void repeatedCall()
+/***********WiFi on connect handler*************************/
+void WiFiStationConnected(WiFiEvent_t event, WiFiEventInfo_t info)
 {
-  static int num = 0;
-  unsigned long currentMillis = millis();
-  if ((currentMillis - previousMillis) >= interval)
-  {
-    // save the last time you blinked the LED
-    previousMillis = currentMillis;
-    if (FirmwareVersionCheck())
-    {
-      firmwareUpdate();
-    }
-  }
-  if ((currentMillis - previousMillis_2) >= mini_interval)
-  {
-    previousMillis_2 = currentMillis;
-    Serial.print("Loop IOT...");
-    Serial.print(num++);
-    Serial.print(" Versao de firmware ativa:");
-    Serial.println(FirmwareVer);
-    if (WiFi.status() == WL_CONNECTED)
-    {
-      Serial.println("wifi connectado");
-    }
-    else
-    {
-      connect_wifi();
-    }
-  }
+  Serial.println("WiFi connected handler invoked");
+  wifi_mqtt.setServer(mqtt_server, 1883);
+  wifi_connected = true;
 }
-void connectToAWS()
+/**********WiFi on disconnect handler************************/
+void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
 {
-  // Configure WiFiClientSecure para usar os certificados AWS que geramos
-  net.setCACert(AWS_CERT_CA);
-  net.setCertificate(AWS_CERT_CRT);
-  net.setPrivateKey(AWS_CERT_PRIVATE);
-  // Conecte-se ao corretor MQTT no endpoint AWS que definimos anteriormente
-  client.begin(AWS_IOT_ENDPOINT, 8883, net);
-  client.setKeepAlive(15000);
-  // Tente se conectar ao AWS e conte quantas vezes tentamos novamente.
-  int retries = 0;
-  Serial.print("Connecting to AWS IOT");
-  while (!client.connect(DEVICE_NAME) && retries < AWS_MAX_RECONNECT_TRIES)
+  Serial.println("WiFi disconnected handler invoked");
+  setup_gprs();
+  gsm_mqtt.setServer(mqtt_server, 1883);
+  wifi_connected = false;
+}
+/****************************AWS callback*******************/
+void messageReceived(String &topic, String &payload)
+{
+  Serial.println("ïncoming: " + topic + "-" + payload);
+  client.publish(topic + "/STATUS", "SUCCESS");
+  DynamicJsonDocument jsonDoc(1024);
+  DeserializationError error = deserializeJson(jsonDoc, payload);
+  String uuid = jsonDoc["uuid"];
+  String userID = jsonDoc["userid"];
+  String password = jsonDoc["password"];
+  EEPROM.write(250, 1);
+  for (int i = 0; i < 100; i++)
   {
-    Serial.print(".");
-    delay(100);
-    retries++;
+    EEPROM.write(i + 100, 0);
   }
-  // Certifique-se de que realmente conectamos com sucesso ao broker MQTT
-  // Do contrário, apenas encerramos a função e aguardamos o próximo loop.
-  if (!client.connected())
+
+  for (int i = 0; i < 36; i++)
   {
-    Serial.println(" Tempo esgotado!");
+    EEPROM.write(i + 100, uuid[i]);
+  }
+
+  for (int i = 0; i < 15; i++)
+  {
+    EEPROM.write(i + 140, userID[i]);
+  }
+
+  for (int i = 0; i < 15; i++)
+  {
+    EEPROM.write(i + 160, password[i]);
+  }
+  EEPROM.commit();
+  delay(500);
+  ESP.restart();
+}
+void modem_init()
+{
+  pinMode(MODEM_PWKEY, OUTPUT);
+  pinMode(MODEM_RST, OUTPUT);
+  pinMode(33, INPUT);
+  pinMode(35, INPUT);
+  pinMode(25, OUTPUT);
+  pinMode(MODEM_POWER_ON, OUTPUT);
+  digitalWrite(MODEM_PWKEY, LOW);
+  digitalWrite(MODEM_RST, HIGH);
+  digitalWrite(MODEM_POWER_ON, HIGH);
+}
+
+void setup_gprs()
+{
+
+  SerialAT.begin(9600, SERIAL_8N1, MODEM_RX, MODEM_TX);
+  delay(6000);
+  digitalWrite(25, HIGH);
+  Serial.println("initalizing modem..");
+  modem.restart();
+  String modemInfo = modem.getModemInfo();
+  Serial.print("modem info:");
+  Serial.println(modemInfo);
+  if (GSM_PIN && modem.getSimStatus() != 3)
+  {
+    modem.simUnlock(GSM_PIN);
+  }
+  Serial.print("Waiting for network...");
+  if (!modem.waitForNetwork(240000l))
+  {
+    delay(10000);
     return;
   }
-  // Se pousarmos aqui, nos conectamos com sucesso ao AWS!
-  // E podemos assinar tópicos e enviar mensagens.
-  Serial.println("Conectado!");
-}
-
-void connect_wifi()
-{
-  Serial.println("Aguardando Wi-Fi");
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED)
+  Serial.println("Success");
+  if (modem.isNetworkConnected())
   {
-    delay(500);
-    Serial.print(".");
+    Serial.println("Network connected");
   }
-
-  Serial.println("");
-  Serial.println("Wi-Fi conectado");
-  Serial.println("Endereço de IP: ");
-  Serial.println(WiFi.localIP());
-}
-
-void firmwareUpdate(void)
-{
-  WiFiClientSecure client2;
-  client2.setCACert(rootCACertificate);
-  //httpUpdate.setLedPin(LED_BUILTIN, LOW);
-  t_httpUpdate_return ret = httpUpdate.update(client2, URL_fw_Bin);
-
-  switch (ret)
+  Serial.print(F("Connecting to APN"));
+  Serial.print(apn);
+  if (!modem.gprsConnect(apn, gprsUser, gprsPass))
   {
-  case HTTP_UPDATE_FAILED:
-    Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
-    break;
-
-  case HTTP_UPDATE_NO_UPDATES:
-    Serial.println("HTTP_UPDATE_NO_UPDATES");
-    break;
-
-  case HTTP_UPDATE_OK:
-    Serial.println("HTTP_UPDATE_OK");
-    break;
+    Serial.println("fail");
+    delay(1000);
+    return;
+  }
+  Serial.println("Success");
+  if (modem.isGprsConnected())
+  {
+    Serial.println("GPRS connected");
+    gprs_connected = true;
+    gsm_mqtt.setServer(mqtt_server, 1883);
   }
 }
 
-int FirmwareVersionCheck(void)
+String read_uuid()
 {
-  String payload;
-  int httpCode;
-  String fwurl = "";
-  fwurl += URL_fw_Version;
-  fwurl += "?";
-  fwurl += String(rand());
-  Serial.println(fwurl);
-  WiFiClientSecure *client2 = new WiFiClientSecure;
-
-  if (client2)
+  String uuid_in_eeprom = "";
+  for (int i = 0; i < 36; ++i)
   {
-    client2->setCACert(rootCACertificate);
+    uuid_in_eeprom += char(EEPROM.read(i + 100));
+  }
+  return uuid_in_eeprom;
+}
 
-    // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is
-    HTTPClient https;
+String read_userid()
+{
+  String userid_in_eeprom = "";
+  for (int i = 0; i < 15; ++i)
+  {
+    userid_in_eeprom += char(EEPROM.read(i + 140));
+  }
+  return userid_in_eeprom;
+}
 
-    if (https.begin(*client2, fwurl))
-    { // HTTPS
-      Serial.print("[HTTPS] GET...\n");
-      // start connection and send HTTP header
-      delay(100);
-      httpCode = https.GET();
-      delay(100);
-      if (httpCode == HTTP_CODE_OK) // if version received
-      {
-        payload = https.getString(); // save received version
-      }
-      else
-      {
-        Serial.print("Erro ao baixar arquivo de versão:");
-        Serial.println(httpCode);
-      }
-      https.end();
-    }
-    delete client2;
+String read_password()
+{
+  String password_in_eeprom = "";
+  for (int i = 0; i < 15; ++i)
+  {
+    password_in_eeprom += char(EEPROM.read(i + 160));
+  }
+  return password_in_eeprom;
+}
+
+void connectToAWS()
+{
+  
+  modemGSMSSL.setCACert(AWS_CERT_CA);
+  modemGSMSSL.setCertificate(AWS_CERT_CRT);
+  modemGSMSSL.setPrivateKey(AWS_CERT_PRIVATE);
+  client.begin(AWS_IOT_ENDPOINT, 8883, modemGSMSSL);
+  
+  int retries = 0;
+  Serial.print("Connecting to AWS IOT");
+
+  while (!client.connect(DEVICE_NAME) && retries < AWS_MAX_RECONNECT_TRIES){
+
+  Serial.print(".");
+  delay(100);
+  retries++;
   }
 
-  if (httpCode == HTTP_CODE_OK) // if version received
+  if (!client.connected())
   {
-    payload.trim();
-    if (payload.equals(FirmwareVer))
-    {
-      Serial.printf("\nDispositivo já na versão de firmware mais recente:%s\n", FirmwareVer);
-      return 0;
-    }
-    else
-    {
-      Serial.println(payload);
-      Serial.println("Novo firmware detectado");
-      return 1;
-    }
+    Serial.println("Timeout");
+    return;
   }
-  return 0;
+  Serial.println("Connected");
 }
