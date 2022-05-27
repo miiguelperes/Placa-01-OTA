@@ -19,15 +19,21 @@
 #include <MQTT.h>
 #include <MQTTClient.h>
 #include <SSLClient.h>
+#include <Wire.h>
+#include "ccs811.h"
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
 //#include "cert.h"
 //#include <WiFiClientSecure.h>
 
 /*************************Variable decleration********************/
 String FirmwareVer = {
     "4.1"};
-String ap_mode_ssid_ = "Cybene";
+String ap_mode_ssid_ = "Rastreagro";
 char ap_mode_ssid[35];
-char ap_mode_password[] = "Cybene@123";
+char ap_mode_password[] = "Rastreagro@123";
 String macID = "";
 char jsonBuffer[512];
 String name = "CONF/SN-";
@@ -44,6 +50,15 @@ bool gprs_connected = false;
 const char apn[] = "allcom.vivo.com.br";
 const char gprsUser[] = "allcom";
 const char gprsPass[] = "allcom";
+float val1, val2;
+const int oneWireBus = 13;
+const char *gpsStream =
+    "$GPRMC,045103.000,A,3014.1984,N,09749.2872,W,0.67,161.46,030913,,,A*7C\r\n"
+    "$GPGGA,045104.000,3014.1985,N,09749.2873,W,1,09,1.2,211.6,M,-22.5,M,,0000*62\r\n"
+    "$GPRMC,045200.000,A,3014.3820,N,09748.9514,W,36.88,65.02,030913,,,A*77\r\n"
+    "$GPGGA,045201.000,3014.3864,N,09748.9411,W,1,10,1.2,200.8,M,-22.5,M,,0000*6C\r\n"
+    "$GPRMC,045251.000,A,3014.4275,N,09749.0626,W,0.51,217.94,030913,,,A*7D\r\n"
+    "$GPGGA,045252.000,3014.4273,N,09749.0628,W,1,09,1.3,206.9,M,-22.5,M,,0000*6F\r\n";
 /*****************************************************************/
 /************************************AWS parameters***************/
 #define DEVICE_NAME "placa-01"
@@ -58,9 +73,13 @@ SSLClient modemGSMSSL(&gsm_client);
 SSLClient net(&wifi_client);
 PubSubClient wifi_mqtt(wifi_client);
 PubSubClient gsm_mqtt(gsm_client);
-//WiFiClientSecure net = WiFiClientSecure();
 MQTTClient client = MQTTClient(512);
+CCS811 ccs811(23);
 credentials cred;
+OneWire oneWire(oneWireBus);
+TinyGPSPlus gps;
+DallasTemperature sensors(&oneWire);
+SoftwareSerial ss(17, 16);
 
 void setup_gprs();
 void connectToAWS();
@@ -79,7 +98,13 @@ void lwMQTTErr(lwmqtt_err_t reason);
 void setup()
 {
   Serial.begin(115200);
-
+  ss.begin(115200);
+  
+ while (*gpsStream)
+  {
+    gps.encode(*gpsStream++);
+  }
+ 
   modem_init();
   setup_gprs();
   Serial.println(macID = WiFi.macAddress());
@@ -92,6 +117,17 @@ void setup()
   Serial.println(name);
   cred.EEPROM_Config();
   // cred.Erase_eeprom();
+  // Enable I2C
+  Wire.begin();
+
+  // Enable CCS811
+  ccs811.set_i2cdelay(50);
+  bool ok = ccs811.begin();
+  if (!ok)
+    Serial.println("setup: CCS811 begin FAILED");
+  ok = ccs811.start(CCS811_MODE_1SEC);
+  if (!ok)
+    Serial.println("setup: CCS811 start FAILED");
 
   WiFi.onEvent(WiFiStationConnected, ARDUINO_EVENT_WIFI_AP_STACONNECTED);
   WiFi.onEvent(WiFiStationDisconnected, ARDUINO_EVENT_WIFI_AP_STADISCONNECTED);
@@ -113,25 +149,22 @@ void setup()
     broker_id.toCharArray(broker_id_char, 15);
     broker_password.toCharArray(broker_password_char, 15);
     connectToAWS();
-    //client.subscribe(name);
-    //client.onMessage(messageReceived);
+    // client.subscribe(name);
+    // client.onMessage(messageReceived);
   }
 }
 void loop()
 {
-    client.loop();
-  if(!client.connected()){
+  delay(15000);
+  client.loop();
+  if (!client.connected())
+  {
     connectToAWS();
   }
-  Serial.println("conectado: "+client.connected());
-  Serial.println("gprs_connected: "+gprs_connected);
+  Serial.println("conectado: " + client.connected());
+  Serial.println("gprs_connected: " + gprs_connected);
   if (gprs_connected)
   {
-   /*  Serial.println("gsm_mqtt: "+gsm_mqtt.connected());
-    if (!gsm_mqtt.connected())
-    {
-      Gsm_client_connect();
-    } */
 
     Send_json_to_broker();
     gsm_mqtt.loop();
@@ -148,7 +181,7 @@ void loop()
 
   cred.server_loops();
 
-  delay(5000);
+  delay(15000);
 }
 /*****************************************************************/
 /*************************WiFi client-broker connect**************/
@@ -196,16 +229,89 @@ bool Gsm_client_connect()
 
 void Send_json_to_broker()
 {
-  DynamicJsonDocument jsonBuffer(JSON_OBJECT_SIZE(6) + 100);
+  if (millis() > 5000 && gps.charsProcessed() < 10)
+  {
+    Serial.println(F("No GPS detected: check wiring."));
+  
+  }
+
+  while (ss.available() > 0)
+  {
+    if (gps.encode(ss.read()))
+    {
+      Serial.println("GPS READY");
+    }
+    else
+    {
+
+      Serial.println("GPS ERROR");
+    }
+  }
+  DynamicJsonDocument jsonBuffer(JSON_OBJECT_SIZE(14) + 100);
   JsonObject root = jsonBuffer.to<JsonObject>();
   JsonObject state = root.createNestedObject("state");
   JsonObject state_reported = state.createNestedObject("reported");
-  state_reported["value"] = random(100);
+
+  uint16_t eco2, etvoc, errstat, raw;
+  ccs811.read(&eco2, &etvoc, &errstat, &raw);
+  
+  
   state_reported["fw_version"] = FirmwareVer;
   state_reported["imei"] = modem.getIMEI();
   state_reported["ip_local_wifi"] = WiFi.localIP();
   state_reported["gprs_connected"] = gprs_connected ? 1 : 0;
   state_reported["ip_local_gprs"] = modem.getLocalIP();
+  state_reported["gsm_location"] = modem.getGsmLocation();
+  state_reported["temperature"] = sensors.getTempCByIndex(0);
+
+  if (gps.location.isValid())
+  {
+    String link = "www.google.com/maps/place/" + String(gps.location.lat(), 6) + "," + String(gps.location.lng(), 6);
+    Serial.println(link);
+  }
+
+  if (gps.location.isUpdated())
+  {
+    Serial.println("GPS OK");
+
+    Serial.print("Latitude= ");
+    Serial.print(gps.location.lat(), 6);
+    // Longitude in degrees (double)
+    Serial.print(" Longitude= ");
+    Serial.println(gps.location.lng(), 6);
+
+    state_reported["gps_latitude"] = gps.location.lat();
+    state_reported["gps_longitude"] = gps.location.lng();
+    state_reported["altitude"] = gps.altitude.kilometers();
+    state_reported["speed"] = gps.speed.kmph();
+  }
+  else
+  {
+    Serial.println("GPS error");
+  }
+
+  if (errstat == CCS811_ERRSTAT_OK)
+  {
+    val1 = eco2;
+    val2 = etvoc;
+    state_reported["eco2"] = eco2;
+    state_reported["etvoc"] = etvoc;
+  }
+  else if (errstat == CCS811_ERRSTAT_OK_NODATA)
+  {
+    Serial.println("CCS811: waiting for (new) data");
+  }
+  else if (errstat & CCS811_ERRSTAT_I2CFAIL)
+  {
+    Serial.println("CCS811: I2C error");
+  }
+  else
+  {
+    Serial.print("CCS811: errstat=");
+    Serial.print(errstat, HEX);
+    Serial.print("=");
+    Serial.println(ccs811.errstat_str(errstat));
+  }
 
   Serial.printf("Sending  [%s]: ", AWS_IOT_TOPIC);
   serializeJson(root, Serial);
@@ -312,7 +418,7 @@ void modem_init()
 void setup_gprs()
 {
 
-  SerialAT.begin(9600, SERIAL_8N1, MODEM_RX, MODEM_TX);
+  SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
   delay(6000);
   digitalWrite(25, HIGH);
   Serial.println("initalizing modem..");
@@ -384,20 +490,21 @@ String read_password()
 
 void connectToAWS()
 {
-  
+
   modemGSMSSL.setCACert(AWS_CERT_CA);
   modemGSMSSL.setCertificate(AWS_CERT_CRT);
   modemGSMSSL.setPrivateKey(AWS_CERT_PRIVATE);
   client.begin(AWS_IOT_ENDPOINT, 8883, modemGSMSSL);
-  
+  client.setKeepAlive(15000);
   int retries = 0;
   Serial.print("Connecting to AWS IOT");
 
-  while (!client.connect(DEVICE_NAME) && retries < AWS_MAX_RECONNECT_TRIES){
+  while (!client.connect(DEVICE_NAME) && retries < AWS_MAX_RECONNECT_TRIES)
+  {
 
-  Serial.print(".");
-  delay(100);
-  retries++;
+    Serial.print(".");
+    delay(100);
+    retries++;
   }
 
   if (!client.connected())
