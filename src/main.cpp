@@ -52,13 +52,7 @@ const char gprsUser[] = "allcom";
 const char gprsPass[] = "allcom";
 float val1, val2;
 const int oneWireBus = 13;
-const char *gpsStream =
-    "$GPRMC,045103.000,A,3014.1984,N,09749.2872,W,0.67,161.46,030913,,,A*7C\r\n"
-    "$GPGGA,045104.000,3014.1985,N,09749.2873,W,1,09,1.2,211.6,M,-22.5,M,,0000*62\r\n"
-    "$GPRMC,045200.000,A,3014.3820,N,09748.9514,W,36.88,65.02,030913,,,A*77\r\n"
-    "$GPGGA,045201.000,3014.3864,N,09748.9411,W,1,10,1.2,200.8,M,-22.5,M,,0000*6C\r\n"
-    "$GPRMC,045251.000,A,3014.4275,N,09749.0626,W,0.51,217.94,030913,,,A*7D\r\n"
-    "$GPGGA,045252.000,3014.4273,N,09749.0628,W,1,09,1.3,206.9,M,-22.5,M,,0000*6F\r\n";
+static const int RXPin = 16, TXPin = 17;
 /*****************************************************************/
 /************************************AWS parameters***************/
 #define DEVICE_NAME "placa-01"
@@ -79,7 +73,7 @@ credentials cred;
 OneWire oneWire(oneWireBus);
 TinyGPSPlus gps;
 DallasTemperature sensors(&oneWire);
-SoftwareSerial ss(17, 16);
+SoftwareSerial ss(RXPin, TXPin);
 
 void setup_gprs();
 void connectToAWS();
@@ -98,13 +92,7 @@ void lwMQTTErr(lwmqtt_err_t reason);
 void setup()
 {
   Serial.begin(115200);
-  ss.begin(115200);
-  
- while (*gpsStream)
-  {
-    gps.encode(*gpsStream++);
-  }
- 
+
   modem_init();
   setup_gprs();
   Serial.println(macID = WiFi.macAddress());
@@ -119,6 +107,7 @@ void setup()
   // cred.Erase_eeprom();
   // Enable I2C
   Wire.begin();
+  ss.begin(9600);
 
   // Enable CCS811
   ccs811.set_i2cdelay(50);
@@ -232,21 +221,8 @@ void Send_json_to_broker()
   if (millis() > 5000 && gps.charsProcessed() < 10)
   {
     Serial.println(F("No GPS detected: check wiring."));
-  
   }
 
-  while (ss.available() > 0)
-  {
-    if (gps.encode(ss.read()))
-    {
-      Serial.println("GPS READY");
-    }
-    else
-    {
-
-      Serial.println("GPS ERROR");
-    }
-  }
   DynamicJsonDocument jsonBuffer(JSON_OBJECT_SIZE(14) + 100);
   JsonObject root = jsonBuffer.to<JsonObject>();
   JsonObject state = root.createNestedObject("state");
@@ -254,8 +230,8 @@ void Send_json_to_broker()
 
   uint16_t eco2, etvoc, errstat, raw;
   ccs811.read(&eco2, &etvoc, &errstat, &raw);
-  
-  
+
+  state_reported["mac"] = WiFi.macAddress();
   state_reported["fw_version"] = FirmwareVer;
   state_reported["imei"] = modem.getIMEI();
   state_reported["ip_local_wifi"] = WiFi.localIP();
@@ -270,24 +246,23 @@ void Send_json_to_broker()
     Serial.println(link);
   }
 
-  if (gps.location.isUpdated())
+  while (ss.available() > 0)
   {
-    Serial.println("GPS OK");
+    if (gps.encode(ss.read()))
+    {
+      if (gps.location.isValid())
+      {
+        Serial.println("GPS OK");
+        double latitude = (gps.location.lat());
+        double longitude = (gps.location.lng());
 
-    Serial.print("Latitude= ");
-    Serial.print(gps.location.lat(), 6);
-    // Longitude in degrees (double)
-    Serial.print(" Longitude= ");
-    Serial.println(gps.location.lng(), 6);
-
-    state_reported["gps_latitude"] = gps.location.lat();
-    state_reported["gps_longitude"] = gps.location.lng();
-    state_reported["altitude"] = gps.altitude.kilometers();
-    state_reported["speed"] = gps.speed.kmph();
-  }
-  else
-  {
-    Serial.println("GPS error");
+        state_reported["gps_latitude"] = latitude;
+        state_reported["gps_longitude"] = longitude;
+        state_reported["altitude"] = gps.altitude.kilometers();
+        state_reported["speed"] = gps.speed.kmph();
+      }
+    }
+    
   }
 
   if (errstat == CCS811_ERRSTAT_OK)
